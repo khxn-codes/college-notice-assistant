@@ -111,3 +111,34 @@ def delete_notice_chunks(notice_id: str) -> None:
     collection = _get_collection()
     collection.delete(where={"notice_id": notice_id})
     logger.info("Deleted all Chroma chunks for notice %s.", notice_id)
+
+
+def update_notice_chunks_metadata(
+    notice_id: str,
+    title: str | None = None,
+    notice_date: str | None = None,
+    category: str | None = None,
+) -> None:
+    """Update metadata for existing Chroma chunks belonging to ``notice_id``."""
+    try:
+        collection = _get_collection()
+        results = collection.get(where={"notice_id": notice_id}, include=["metadatas"])
+        if not results or not results["ids"]:
+            return
+
+        updated_metadatas = []
+        for meta in results["metadatas"]:
+            new_meta = dict(meta)
+            if title is not None:
+                new_meta["title"] = title
+            if notice_date is not None:
+                new_meta["notice_date"] = notice_date
+            if category is not None:
+                new_meta["category"] = category
+            updated_metadatas.append(new_meta)
+
+        collection.update(ids=results["ids"], metadatas=updated_metadatas)
+        logger.info("Updated metadata for %d chunk(s) in notice %s.", len(results["ids"]), notice_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to update Chroma metadata for notice %s: %s", notice_id, exc)
+

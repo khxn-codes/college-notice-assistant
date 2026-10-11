@@ -17,6 +17,7 @@ import time
 
 from app.llm.client import BaseLLMClient, get_llm_client
 from app.llm.prompts import SYSTEM_PROMPT, build_user_message
+from app.retrieval.latest_wins import apply_latest_wins
 from app.retrieval.retriever import RetrievedChunk, retrieve
 
 logger = logging.getLogger(__name__)
@@ -54,12 +55,15 @@ def answer_question(
 
     config_label = config or "default"
 
-    # ── Retrieve ──────────────────────────────────────────────────────────────
-    chunks: list[RetrievedChunk] = retrieve(question, category=category, mode=mode)
+    # ── Retrieve & Apply Latest-Wins ──────────────────────────────────────────
+    raw_chunks: list[RetrievedChunk] = retrieve(question, category=category, mode=mode)
+    chunks, supersedes_notes = apply_latest_wins(raw_chunks, drop=True)
     logger.info(
-        "RAG: question='%.80s…'  chunks_retrieved=%d  config=%s",
+        "RAG: question='%.80s…'  raw_chunks=%d  filtered_chunks=%d  notes=%s  config=%s",
         question,
+        len(raw_chunks),
         len(chunks),
+        supersedes_notes,
         config_label,
     )
 
@@ -74,7 +78,7 @@ def answer_question(
         }
         for i, c in enumerate(chunks)
     ]
-    user_message = build_user_message(question, passages)
+    user_message = build_user_message(question, passages, supersedes_notes=supersedes_notes)
 
     # ── LLM call ──────────────────────────────────────────────────────────────
     client = llm_client or get_llm_client()
@@ -114,6 +118,7 @@ def answer_question(
         "answer": raw_answer,
         "citations": citations,
         "chunks": chunk_payloads,
+        "notes": supersedes_notes,
         "latency_ms": latency_ms,
         "config": config_label,
     }

@@ -21,6 +21,7 @@ from app.ingestion.chunker import chunk_pages
 from app.ingestion.extract import extract_pages
 from app.ingestion.indexer import index_chunks
 from app.ingestion.metadata import parse_metadata
+from app.ingestion.revisions import detect_superseded_notice_in_db
 
 logger = logging.getLogger(__name__)
 
@@ -93,24 +94,32 @@ def ingest_file(path: Path, original_filename: str | None = None) -> dict:
         category=meta.category,
     )
 
-    # ── Step 6: Insert SQLite row ─────────────────────────────────────────────
+    # ── Step 6: Insert SQLite row & Revision Detection ────────────────────────
     with get_connection() as conn:
+        supersedes_id = detect_superseded_notice_in_db(
+            title=meta.title,
+            notice_date=meta.notice_date,
+            category=meta.category,
+            source_file=fname,
+            conn=conn,
+        )
         conn.execute(
             """
-            INSERT INTO notices (id, title, notice_date, category, source_file, file_hash)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO notices (id, title, notice_date, category, source_file, file_hash, supersedes_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (notice_id, meta.title, notice_date_str, meta.category, fname, file_hash),
+            (notice_id, meta.title, notice_date_str, meta.category, fname, file_hash, supersedes_id),
         )
         conn.commit()
 
     logger.info(
-        "Ingested '%s' → id=%s  chunks=%d  date=%s  category=%s",
+        "Ingested '%s' → id=%s  chunks=%d  date=%s  category=%s  supersedes=%s",
         fname,
         notice_id,
         len(chunks),
         notice_date_str,
         meta.category,
+        supersedes_id,
     )
 
     # ── Step 7: Move to processed/ ────────────────────────────────────────────
@@ -128,4 +137,5 @@ def ingest_file(path: Path, original_filename: str | None = None) -> dict:
         "notice_id": notice_id,
         "title": meta.title,
         "chunks": len(chunks),
+        "supersedes_id": supersedes_id,
     }

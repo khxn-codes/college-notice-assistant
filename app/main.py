@@ -19,6 +19,7 @@ import shutil
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -29,6 +30,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.db import get_connection, init_db
 from app.ingestion.folder_connector import FolderConnector
+from app.ingestion.indexer import update_notice_chunks_metadata
 from app.ingestion.pipeline import ingest_file
 from app.rag import answer_question
 from app.retrieval.bm25_store import rebuild_bm25_index
@@ -64,6 +66,13 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 # Pydantic schemas
 # ---------------------------------------------------------------------------
+
+
+class NoticeUpdateRequest(BaseModel):
+    title: str | None = None
+    notice_date: str | None = None
+    category: str | None = None
+    supersedes_id: str | None = None
 
 
 class AskRequest(BaseModel):
@@ -174,6 +183,92 @@ async def list_notices() -> JSONResponse:
 
     notices = [dict(row) for row in rows]
     return JSONResponse(content={"notices": notices, "count": len(notices)})
+
+
+@app.patch("/notices/{notice_id}", tags=["notices"])
+async def update_notice(notice_id: str, request: NoticeUpdateRequest) -> JSONResponse:
+    """Update metadata for an existing notice (title, notice_date, category, supersedes_id)."""
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT id, title, notice_date, category, source_file, indexed_at, supersedes_id FROM notices WHERE id = ?",
+            (notice_id,),
+        ).fetchone()
+
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"Notice '{notice_id}' not found.")
+
+        payload = request.model_dump(exclude_unset=True)
+        if not payload:
+            return JSONResponse(content={"status": "updated", "notice": dict(existing)})
+
+        updates: dict[str, str | None] = {}
+        if "title" in payload:
+            title_val = payload["title"]
+            if title_val is None or not str(title_val).strip():
+                raise HTTPException(status_code=422, detail="Title cannot be empty.")
+            updates["title"] = str(title_val).strip()
+
+        if "notice_date" in payload:
+            date_val = payload["notice_date"]
+            if date_val is None or not str(date_val).strip():
+                raise HTTPException(status_code=422, detail="Notice date cannot be empty.")
+            try:
+                datetime.strptime(str(date_val).strip()[:10], "%Y-%m-%d")
+            except ValueError:
+                raise HTTPException(status_code=422, detail="Invalid date format. Expected YYYY-MM-DD.")
+            updates["notice_date"] = str(date_val).strip()[:10]
+
+        if "category" in payload:
+            cat_val = payload["category"]
+            if cat_val is None or not str(cat_val).strip():
+                raise HTTPException(status_code=422, detail="Category cannot be empty.")
+            updates["category"] = str(cat_val).strip().lower()
+
+        if "supersedes_id" in payload:
+            sid = payload["supersedes_id"]
+            if sid is None or sid == "" or sid == "null":
+                updates["supersedes_id"] = None
+            else:
+                sid_str = str(sid).strip()
+                if sid_str == notice_id:
+                    raise HTTPException(status_code=400, detail="A notice cannot supersede itself.")
+                target = conn.execute("SELECT id FROM notices WHERE id = ?", (sid_str,)).fetchone()
+                if not target:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Referenced notice '{sid_str}' does not exist.",
+                    )
+                updates["supersedes_id"] = sid_str
+
+        if updates:
+            set_clauses = [f"{col} = ?" for col in updates.keys()]
+            values = list(updates.values()) + [notice_id]
+            conn.execute(
+                f"UPDATE notices SET {', '.join(set_clauses)} WHERE id = ?",
+                values,
+            )
+            conn.commit()
+
+        updated_row = conn.execute(
+            "SELECT id, title, notice_date, category, source_file, indexed_at, supersedes_id FROM notices WHERE id = ?",
+            (notice_id,),
+        ).fetchone()
+
+    # If Chroma metadata changed, update it and rebuild BM25
+    if any(k in updates for k in ("title", "notice_date", "category")):
+        try:
+            update_notice_chunks_metadata(
+                notice_id=notice_id,
+                title=updates.get("title"),
+                notice_date=updates.get("notice_date"),
+                category=updates.get("category"),
+            )
+            rebuild_bm25_index()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to sync updated notice to Chroma/BM25: %s", exc)
+
+    logger.info("Notice %s updated: %s", notice_id, updates)
+    return JSONResponse(content={"status": "updated", "notice": dict(updated_row)})
 
 
 # ---------------------------------------------------------------------------

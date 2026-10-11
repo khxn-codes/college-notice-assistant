@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from app.config import settings
 from app.retrieval.bm25_store import get_bm25_index
+from app.retrieval.latest_wins import apply_latest_wins
 
 logger = logging.getLogger(__name__)
 
@@ -46,18 +47,20 @@ def retrieve(
     category: str | None = None,
     top_k: int | None = None,
     mode: str | None = None,
+    apply_latest_wins_rule: bool = False,
 ) -> list[RetrievedChunk]:
     """Run hybrid (or vector-only) retrieval for *query*.
 
     Args:
-        query:    The user's question.
-        category: Optional category filter (e.g. "exam", "fees").
-                  When provided, only chunks from that category are returned.
-        top_k:    Final number of chunks to return. Defaults to ``settings.top_k``.
-        mode:     ``"hybrid"`` or ``"vector"``.  Defaults to ``settings.retrieval_mode``.
+        query:                  The user's question.
+        category:               Optional category filter (e.g. "exam", "fees").
+                                When provided, only chunks from that category are returned.
+        top_k:                  Final number of chunks to return. Defaults to ``settings.top_k``.
+        mode:                   ``"hybrid"`` or ``"vector"``. Defaults to ``settings.retrieval_mode``.
+        apply_latest_wins_rule: If True, filter out superseded notice chunks.
 
     Returns:
-        List of :class:`RetrievedChunk` sorted by descending RRF score.
+        List of :class:`RetrievedChunk` sorted by descending score.
     """
     k = top_k if top_k is not None else settings.top_k
     retrieval_mode = mode if mode is not None else settings.retrieval_mode
@@ -68,22 +71,26 @@ def retrieve(
     if retrieval_mode == "vector":
         # Vector-only — convert scores and return
         chunks = _dedupe_by_id(vector_results)
-        return chunks[:k]
+        final_chunks = chunks[:k]
+    else:
+        # ── BM25 leg ──────────────────────────────────────────────────────────
+        bm25_results = _bm25_search(query, category=category, k=settings.bm25_k)
 
-    # ── BM25 leg ──────────────────────────────────────────────────────────────
-    bm25_results = _bm25_search(query, category=category, k=settings.bm25_k)
+        # ── RRF merge ─────────────────────────────────────────────────────────
+        final_chunks = _reciprocal_rank_fusion(vector_results, bm25_results, top_k=k)
+        logger.info(
+            "Retrieval [%s]: query='%.60s…'  vector=%d  bm25=%d  merged=%d",
+            retrieval_mode,
+            query,
+            len(vector_results),
+            len(bm25_results),
+            len(final_chunks),
+        )
 
-    # ── RRF merge ─────────────────────────────────────────────────────────────
-    merged = _reciprocal_rank_fusion(vector_results, bm25_results, top_k=k)
-    logger.info(
-        "Retrieval [%s]: query='%.60s…'  vector=%d  bm25=%d  merged=%d",
-        retrieval_mode,
-        query,
-        len(vector_results),
-        len(bm25_results),
-        len(merged),
-    )
-    return merged
+    if apply_latest_wins_rule:
+        final_chunks, _ = apply_latest_wins(final_chunks, drop=True)
+
+    return final_chunks
 
 
 # ---------------------------------------------------------------------------
