@@ -1,6 +1,7 @@
-"""Base Connector interface (Milestone 2).
+"""Base Connector interface.
 
 All connectors must implement ``fetch_new()`` so they are swappable.
+The folder connector (current) and any future ERP connector both extend this.
 """
 
 from __future__ import annotations
@@ -21,12 +22,13 @@ class RawNotice:
 class Connector(ABC):
     """Abstract connector interface.
 
-    Implement this to provide new sources of notices (e.g., folder, ERP).
+    Implement this to add new notice sources (e.g., folder, ERP).
+    The rest of the ingestion pipeline only depends on this interface.
     """
 
     @abstractmethod
     def fetch_new(self) -> list[RawNotice]:
-        """Yield notices that have not been ingested yet.
+        """Return files that have not been ingested yet.
 
         Returns:
             A list of :class:`RawNotice` objects to process.
