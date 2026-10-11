@@ -1,31 +1,37 @@
 """FastAPI application entry point.
 
-Routes (Milestone 1 + 2):
+Routes (Milestone 1 + 2 + 3):
   GET  /health            – liveness check
   POST /notices/upload    – upload and ingest a single file
   POST /notices/sync      – ingest all files in data/inbox/
   GET  /notices           – list indexed notices
+  POST /ask               – RAG question answering with citations
 
-Further routes will be added in later milestones:
-  PATCH /notices/{id}, DELETE /notices/{id}, /ask, /eval/*
+Further routes (Milestone 4+):
+  PATCH /notices/{id}, DELETE /notices/{id}, /eval/*
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import tempfile
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app.config import settings
 from app.db import get_connection, init_db
 from app.ingestion.folder_connector import FolderConnector
 from app.ingestion.pipeline import ingest_file
+from app.rag import answer_question
+from app.retrieval.bm25_store import rebuild_bm25_index
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,15 +45,32 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     """Run startup tasks before the app accepts requests."""
     logger.info("Starting College Notice Assistant API …")
     init_db()
+    # Best-effort: rebuild BM25 index from any chunks already in Chroma
+    try:
+        rebuild_bm25_index()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("BM25 index could not be built at startup: %s", exc)
     yield
 
 
 app = FastAPI(
     title="College Notice Assistant",
     description="RAG chatbot for college notices — FastAPI backend.",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
+
+
+# ---------------------------------------------------------------------------
+# Pydantic schemas
+# ---------------------------------------------------------------------------
+
+
+class AskRequest(BaseModel):
+    question: str
+    category: str | None = None
+    config: str | None = None   # "A" = vector-only, "B" = hybrid
+
 
 # ---------------------------------------------------------------------------
 # Health
@@ -78,7 +101,6 @@ async def upload_notice(file: UploadFile = File(...)) -> JSONResponse:
             detail=f"Unsupported file type '{suffix}'. Only PDF and TXT are accepted.",
         )
 
-    # Write upload to a temp file so ingest_file can read it from disk
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = Path(tmp.name)
@@ -88,8 +110,14 @@ async def upload_notice(file: UploadFile = File(...)) -> JSONResponse:
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    status_code = 200 if result["status"] == "indexed" else 200  # always 200; caller reads "status"
-    return JSONResponse(content=result, status_code=status_code)
+    # Rebuild BM25 after every successful ingest
+    if result["status"] == "indexed":
+        try:
+            rebuild_bm25_index()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("BM25 rebuild failed after upload: %s", exc)
+
+    return JSONResponse(content=result, status_code=200)
 
 
 @app.post("/notices/sync", tags=["notices"])
@@ -105,9 +133,12 @@ async def sync_notices() -> JSONResponse:
         return JSONResponse(content={"message": "No new files found in inbox.", "results": []})
 
     results = []
+    any_indexed = False
     for raw in raw_notices:
         try:
             result = ingest_file(raw.path, original_filename=raw.original_filename)
+            if result["status"] == "indexed":
+                any_indexed = True
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to ingest %s: %s", raw.original_filename, exc)
             result = {
@@ -118,6 +149,13 @@ async def sync_notices() -> JSONResponse:
                 "error": str(exc),
             }
         results.append(result)
+
+    # Rebuild BM25 once after all ingestion
+    if any_indexed:
+        try:
+            rebuild_bm25_index()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("BM25 rebuild failed after sync: %s", exc)
 
     return JSONResponse(content={"results": results})
 
@@ -136,3 +174,78 @@ async def list_notices() -> JSONResponse:
 
     notices = [dict(row) for row in rows]
     return JSONResponse(content={"notices": notices, "count": len(notices)})
+
+
+# ---------------------------------------------------------------------------
+# RAG — /ask
+# ---------------------------------------------------------------------------
+
+
+@app.post("/ask", tags=["rag"])
+async def ask(request: AskRequest) -> JSONResponse:
+    """Answer a question from the indexed notices using RAG.
+
+    Body:
+        question (str):  The student's question.
+        category (str?): Optional category filter.
+        config (str?):   "A" = vector-only, "B" = hybrid. Defaults to env setting.
+
+    Returns:
+        answer, citations, retrieved chunks, latency_ms, config label.
+    """
+    if not request.question.strip():
+        raise HTTPException(status_code=422, detail="'question' must not be empty.")
+
+    logger.info(
+        "POST /ask  question='%.80s'  category=%s  config=%s",
+        request.question,
+        request.category,
+        request.config,
+    )
+
+    result = answer_question(
+        question=request.question,
+        category=request.category,
+        config=request.config,
+    )
+
+    # ── Log to query_logs ─────────────────────────────────────────────────────
+    _log_query(
+        question=request.question,
+        answer=result["answer"],
+        chunk_ids=[c["chunk_id"] for c in result["chunks"]],
+        config_name=result["config"],
+        latency_ms=result["latency_ms"],
+    )
+
+    return JSONResponse(content=result)
+
+
+def _log_query(
+    question: str,
+    answer: str,
+    chunk_ids: list[str],
+    config_name: str,
+    latency_ms: int,
+) -> None:
+    """Persist a query record to the ``query_logs`` table."""
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO query_logs
+                  (id, question, answer, retrieved_chunk_ids, config_name, latency_ms)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    question,
+                    answer,
+                    json.dumps(chunk_ids),
+                    config_name,
+                    latency_ms,
+                ),
+            )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to write query log: %s", exc)

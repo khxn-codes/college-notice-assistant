@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     # Retrieval settings
     top_k: int = 5
 
+    # Retrieval mode: "hybrid" (vector + BM25) or "vector" (vector-only)
+    # Config A = vector-only (chunk_size 800), Config B = hybrid (chunk_size 500)
+    retrieval_mode: str = "hybrid"   # "hybrid" | "vector"
+
+    # k values for the two retrieval legs (used by retriever.py)
+    vector_k: int = 8
+    bm25_k: int = 8
+
     # Data directory (relative to project root)
     data_dir: str = "./data"
 
