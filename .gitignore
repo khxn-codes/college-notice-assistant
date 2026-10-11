@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+data/chroma/
+data/app.db
+data/inbox/
+data/processed/
+eval/results/
+.DS_Store
