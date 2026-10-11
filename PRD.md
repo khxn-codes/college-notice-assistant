@@ -1,7 +1,7 @@
-# PRD: College Notice Assistant
+# PRD: NoticeIQ (RAG-Based AI Assistant for Answering College Notice Queries with Citations)
 
 ## 1. Overview
-A chatbot that answers student questions about college notices (exam schedules, fees, hostel, events, rules) using Retrieval-Augmented Generation (RAG). Every answer cites the source notice (title, date, page). If the notices do not contain the answer, the assistant says so instead of guessing.
+NoticeIQ is a chatbot that answers student questions about college notices (exam schedules, fees, hostel, events, rules) using Retrieval-Augmented Generation (RAG). Every answer cites the source notice (title, date, page). If the notices do not contain the answer, the assistant says so instead of guessing.
 
 ## 2. Problem
 Students waste time searching the college ERP for notices, and revised notices are easy to miss. There is no quick way to ask a question and get a verified, cited answer.

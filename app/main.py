@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     """Run startup tasks before the app accepts requests."""
-    logger.info("Starting College Notice Assistant API …")
+    logger.info("Starting NoticeIQ API …")
     init_db()
     # Best-effort: rebuild BM25 index from any chunks already in Chroma
     try:
@@ -56,9 +56,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="College Notice Assistant",
-    description="RAG chatbot for college notices — FastAPI backend.",
-    version="0.3.0",
+    title="NoticeIQ: RAG-Based AI Assistant for Answering College Notice Queries with Citations",
+    description="NoticeIQ: RAG-Based AI Assistant for Answering College Notice Queries with Citations — FastAPI backend.",
+    version="0.5.0",
     lifespan=lifespan,
 )
 

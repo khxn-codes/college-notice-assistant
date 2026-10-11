@@ -9,7 +9,7 @@ System prompt enforces TECH_SPEC §7 rules:
 
 from __future__ import annotations
 
-SYSTEM_PROMPT = """You are a college notice assistant. You answer student questions \
+SYSTEM_PROMPT = """You are NoticeIQ, an AI assistant for answering college notice queries with citations. You answer student questions \
 strictly based on the notice passages provided below. Follow these rules without exception:
 
 1. Answer ONLY using information from the provided passages. Do not use any outside knowledge.

@@ -1,4 +1,4 @@
-# TECH SPEC: College Notice Assistant
+# TECH SPEC: NoticeIQ (RAG-Based AI Assistant for Answering College Notice Queries with Citations)
 
 ## 1. Architecture
 

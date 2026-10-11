@@ -1,4 +1,4 @@
-"""Streamlit UI for College Notice Assistant (Milestone 5 - Performance Optimized).
+"""Streamlit UI for NoticeIQ: RAG-Based AI Assistant for Answering College Notice Queries with Citations.
 
 Connects to the FastAPI backend over HTTP. Does not import backend code directly.
 Features & Optimizations:
@@ -24,7 +24,7 @@ import streamlit as st
 BACKEND_URL = os.environ.get("BACKEND_URL", os.environ.get("API_BASE_URL", "http://127.0.0.1:8000")).rstrip("/")
 
 st.set_page_config(
-    page_title="College Notice Assistant",
+    page_title="NoticeIQ",
     page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -132,7 +132,7 @@ def update_notice_metadata(notice_id: str, updates: dict[str, Any]) -> dict[str,
 # Sidebar Navigation & Backend Status
 # ---------------------------------------------------------------------------
 
-st.sidebar.markdown("### 🎓 Notice Assistant")
+st.sidebar.markdown("### 🎓 NoticeIQ")
 page = st.sidebar.radio(
     "Navigation",
     ["💬 Chat", "📋 Notices", "📊 Evaluation"],
@@ -147,7 +147,7 @@ else:
     st.sidebar.error(f"Backend Unreachable\n`{BACKEND_URL}`\nPlease start the API:\n`uvicorn app.main:app --reload`")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("College Notice Assistant • Milestone 5")
+st.sidebar.caption("NoticeIQ • AI College Notice Assistant")
 
 
 # ---------------------------------------------------------------------------
@@ -155,9 +155,9 @@ st.sidebar.caption("College Notice Assistant • Milestone 5")
 # ---------------------------------------------------------------------------
 
 if page == "💬 Chat":
-    st.markdown('<div class="main-title">💬 Notice Assistant Chat</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-title">💬 NoticeIQ Chat</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="sub-title">Ask any question about college exams, fees, hostels, or schedules. '
+        '<div class="sub-title">NoticeIQ: RAG-Based AI Assistant for Answering College Notice Queries with Citations. '
         'Every answer is grounded in official notices with citations.</div>',
         unsafe_allow_html=True,
     )

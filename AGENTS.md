@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Project
-College Notice Assistant: a RAG chatbot that answers student questions about college notices with citations. Read `PRD.md` and `TECH_SPEC.md` before doing anything. They are the source of truth.
+NoticeIQ: RAG-Based AI Assistant for Answering College Notice Queries with Citations: a RAG chatbot that answers student questions about college notices with citations. Read `PRD.md` and `TECH_SPEC.md` before doing anything. They are the source of truth.
 
 ## Stack
 Python 3.11+, FastAPI, Streamlit, ChromaDB, sentence-transformers, rank_bm25, SQLite, pytest, Docker.

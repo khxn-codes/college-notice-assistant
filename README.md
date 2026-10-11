@@ -1,6 +1,6 @@
-# College Notice Assistant
+# NoticeIQ: RAG-Based AI Assistant for Answering College Notice Queries with Citations
 
-A RAG chatbot that answers student questions about college notices (exam schedules, fees, hostel, events, rules) with citations. Built with FastAPI, Streamlit, ChromaDB, and rank_bm25.
+NoticeIQ is a RAG chatbot that answers student questions about college notices (exam schedules, fees, hostel, events, rules) with citations. Built with FastAPI, Streamlit, ChromaDB, and rank_bm25.
 
 ---
 
