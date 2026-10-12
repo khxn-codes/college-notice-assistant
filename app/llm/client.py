@@ -15,6 +15,7 @@ Temperature is fixed at 0.1 (low, per TECH_SPEC §7).
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 
 from app.config import settings
@@ -49,6 +50,46 @@ class BaseLLMClient(ABC):
 # ---------------------------------------------------------------------------
 
 
+def classify_error_cause(err: str | Exception) -> str:
+    """Classify an API error into: 'rate limit', 'quota', 'model not found', or 'auth'."""
+    text = str(err).lower()
+
+    # Check for authentication / API key issues
+    if not settings.llm_api_key:
+        return "auth"
+    if any(k in text for k in [
+        "api key not valid",
+        "api_key_invalid",
+        "invalid api key",
+        "unauthenticated",
+        "unauthorized",
+        "permission_denied",
+        "permissiondenied",
+        "401",
+        "403",
+        "forbidden",
+        "invalid_argument",
+    ]) and not ("429" in text or "quota" in text):
+        return "auth"
+
+    # Rate limit vs Quota
+    if any(k in text for k in ["rate limit", "rate_limit", "too many requests"]):
+        return "rate limit"
+    if any(k in text for k in ["quota", "resourceexhausted", "resource exhausted"]):
+        return "quota"
+    if "429" in text:
+        return "rate limit"
+
+    # Model not found
+    if any(k in text for k in ["not found", "notfound", "404", "model not found"]):
+        return "model not found"
+
+    if any(k in text for k in ["auth", "credential", "api key", "api_key"]):
+        return "auth"
+
+    return "unknown API error"
+
+
 class GeminiClient(BaseLLMClient):
     """Google Gemini via the ``google-generativeai`` SDK."""
 
@@ -62,6 +103,11 @@ class GeminiClient(BaseLLMClient):
 
     def complete(self, system: str, user: str) -> str:
         """Call the Gemini Chat API and return the text response."""
+        if not settings.llm_api_key:
+            cause = "auth"
+            logger.error("Gemini API error (%s): LLM_API_KEY is not configured.", cause)
+            return f"I could not generate a response due to an API error ({cause})."
+
         try:
             import google.generativeai as genai
 
@@ -84,11 +130,10 @@ class GeminiClient(BaseLLMClient):
             err = str(exc)
             if settings.llm_api_key and settings.llm_api_key in err:
                 err = err.replace(settings.llm_api_key, "***")
-            logger.error("Gemini API error: %s", err)
-            return (
-                "I could not generate a response due to an API error. "
-                "Please check your LLM_API_KEY and try again."
-            )
+            err = re.sub(r"AIza[0-9A-Za-z-_]{35}", "***", err)
+            cause = classify_error_cause(err)
+            logger.error("Gemini API error (%s): %s", cause, err)
+            return f"I could not generate a response due to an API error ({cause})."
 
 
 # ---------------------------------------------------------------------------

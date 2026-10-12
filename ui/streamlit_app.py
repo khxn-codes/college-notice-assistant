@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 from typing import Any
 import httpx
+import pandas as pd
 import streamlit as st
 
 # ---------------------------------------------------------------------------
@@ -126,6 +127,60 @@ def update_notice_metadata(notice_id: str, updates: dict[str, Any]) -> dict[str,
     resp.raise_for_status()
     clear_notices_cache()
     return resp.json()
+
+
+def format_api_error_for_ui(err_msg: str) -> str:
+    """Classify and format API error with real cause (rate limit, quota, model not found, auth), key never shown."""
+    text = str(err_msg).lower()
+    if any(k in text for k in ["rate limit", "rate_limit", "too many requests", "429"]):
+        cause = "rate limit"
+    elif any(k in text for k in ["quota", "resourceexhausted", "resource exhausted"]):
+        cause = "quota"
+    elif any(k in text for k in ["not found", "notfound", "404", "model not found"]):
+        cause = "model not found"
+    elif any(k in text for k in ["auth", "unauthorized", "unauthenticated", "401", "403", "forbidden", "permission", "api_key", "api key"]):
+        cause = "auth"
+    else:
+        cause = "API error"
+    return f"API error ({cause})"
+
+
+def run_evaluation_api(
+    configs: list[str],
+    delay_seconds: float = 7.0,
+    rerun_failed_only: bool = False,
+    previous_run_id: str | None = None,
+    retrieval_only: bool = False,
+    top_k: int = 5,
+) -> dict[str, Any]:
+    """Trigger evaluation via POST /eval/run."""
+    payload: dict[str, Any] = {
+        "configs": configs,
+        "delay_seconds": delay_seconds,
+        "rerun_failed_only": rerun_failed_only,
+        "retrieval_only": retrieval_only,
+        "top_k": top_k,
+    }
+    if previous_run_id:
+        payload["previous_run_id"] = previous_run_id
+    resp = httpx.post(
+        f"{BACKEND_URL}/eval/run",
+        json=payload,
+        timeout=600.0,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_evaluation_results_api() -> list[dict[str, Any]]:
+    """Fetch previous evaluation runs via GET /eval/results."""
+    try:
+        resp = httpx.get(f"{BACKEND_URL}/eval/results", timeout=15.0)
+        if resp.status_code == 200:
+            return resp.json().get("runs", [])
+        return []
+    except Exception:
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -287,11 +342,11 @@ if page == "💬 Chat":
                             }
                         )
                     except httpx.HTTPStatusError as http_err:
-                        err_text = f"Backend returned an error ({http_err.response.status_code}): {http_err.response.text}"
+                        err_text = f"Backend returned an error ({http_err.response.status_code}): {format_api_error_for_ui(http_err.response.text)}"
                         st.error(err_text)
                         st.session_state.messages.append({"role": "assistant", "content": err_text})
                     except Exception as exc:
-                        err_text = f"An unexpected error occurred while querying the notices: {exc}"
+                        err_text = f"An error occurred while querying notices: {format_api_error_for_ui(str(exc))}"
                         st.error(err_text)
                         st.session_state.messages.append({"role": "assistant", "content": err_text})
 
@@ -454,23 +509,310 @@ elif page == "📋 Notices":
 elif page == "📊 Evaluation":
     st.markdown('<div class="main-title">📊 RAG Evaluation Dashboard</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="sub-title">Benchmark question-answering accuracy, citations, and latency across retrieval configs.</div>',
+        '<div class="sub-title">Benchmark question-answering accuracy, citations, refusal precision, and latency across retrieval configs.</div>',
         unsafe_allow_html=True,
     )
 
-    st.info("🚧 **Coming in Milestone 6**\n\nThe evaluation harness will run the benchmark suite (`eval/test_set.json`) and compare retrieval performance between Vector-only and Hybrid configurations.")
+    if not is_healthy:
+        st.error(
+            f"⚠️ **Backend service is not running.** Please start FastAPI at `{BACKEND_URL}` to run or view evaluations."
+        )
 
-    st.markdown(
-        """
-        ### Planned Milestone 6 Features:
-        - **Automated Test Set Runner**: Evaluates questions against ground truth notices.
-        - **Configuration Comparison**:
-          - **Config A**: Vector-only search with 800-token chunks.
-          - **Config B**: Hybrid search (Vector + BM25 RRF) with 500-token chunks.
-        - **Evaluation Metrics**:
-          - **Answer Accuracy**: Keyword and semantic precision.
-          - **Citation Hit Rate**: Verifies expected source notice is cited.
-          - **Refusal Accuracy**: Verifies unanswerable questions are politely refused.
-          - **Average Latency**: Response generation time comparison.
-        """
+    # ── Evaluation Run Controls ───────────────────────────────────────────────
+    st.subheader("⚙️ Run Benchmark Evaluation")
+    st.caption("Executes `eval/test_set.json` against the selected pipeline configurations. When a configuration uses a different chunk size, it is indexed into a separate Chroma collection without modifying the main database.")
+
+    col_ctrl1, col_ctrl2 = st.columns([2, 1])
+    with col_ctrl1:
+        # Config selection: checkboxes for multi-config or single radio
+        st.markdown("**Select configuration(s):**")
+        run_mode_choice = st.radio(
+            "Run mode:",
+            ["Both configs (A & B)", "Config A only", "Config B only"],
+            horizontal=True,
+            key="radio_cfg_choice",
+        )
+        if run_mode_choice == "Both configs (A & B)":
+            chosen_configs = ["A", "B"]
+        elif run_mode_choice == "Config A only":
+            chosen_configs = ["A"]
+        else:
+            chosen_configs = ["B"]
+
+        retrieval_only_mode = st.checkbox(
+            "🔍 Retrieval-only mode (no LLM calls — measures Hit@5 and MRR)",
+            value=False,
+            key="chk_retrieval_only",
+        )
+        rerun_failed = st.checkbox(
+            "🔄 Re-run failed/error questions only",
+            value=False,
+            key="chk_rerun_failed",
+            disabled=retrieval_only_mode,
+        )
+        delay_input = st.number_input(
+            "Delay between LLM calls (seconds):",
+            min_value=0.0,
+            max_value=30.0,
+            value=7.0,
+            step=0.5,
+            key="num_delay_sec",
+            disabled=retrieval_only_mode,
+        )
+    with col_ctrl2:
+        st.write("")
+        st.write("")
+
+        run_disabled = not is_healthy or len(chosen_configs) == 0
+        if st.button("🚀 Run Evaluation", type="primary", disabled=run_disabled, key="btn_run_eval"):
+            prev_run_id_val = None
+            if rerun_failed and selected_run:
+                prev_run_id_val = selected_run.get("run_id")
+            if retrieval_only_mode:
+                spinner_msg = f"Running retrieval-only evaluation on Config(s) {chosen_configs} (Hit@5 + MRR)..."
+            elif rerun_failed:
+                spinner_msg = f"Re-running failed/error questions on Config(s) {chosen_configs} (delay={delay_input}s)..."
+            else:
+                spinner_msg = f"Running evaluation benchmark on Config(s) {chosen_configs} (delay={delay_input}s)..."
+            with st.spinner(spinner_msg):
+                try:
+                    eval_result = run_evaluation_api(
+                        configs=chosen_configs,
+                        delay_seconds=float(delay_input),
+                        rerun_failed_only=rerun_failed,
+                        previous_run_id=prev_run_id_val,
+                        retrieval_only=retrieval_only_mode,
+                    )
+                    st.session_state["latest_eval_run"] = eval_result
+                    run_id_str = eval_result.get("run_id", "")
+                    if eval_result.get("aborted_reason"):
+                        st.warning(f"⚠️ {eval_result['aborted_reason']} (Run ID: `{run_id_str}`)")
+                    else:
+                        st.success(f"✅ Evaluation run completed! (Run ID: `{run_id_str}`)")
+                except Exception as exc:
+                    st.error(f"Evaluation run failed: {exc}")
+
+    st.markdown("---")
+
+    # ── Load Runs History ─────────────────────────────────────────────────────
+    runs_history = get_evaluation_results_api() if is_healthy else []
+
+    # If a run just executed in this session, prepend or ensure it's selected
+    selected_run = None
+    if "latest_eval_run" in st.session_state:
+        selected_run = st.session_state["latest_eval_run"]
+
+    if runs_history:
+        run_options = {
+            f"{r.get('run_id')} ({r.get('timestamp', '')[:19]}) — {len(r.get('configs', {}))} config(s)": r
+            for r in runs_history
+        }
+        selected_label = st.selectbox("Select Evaluation Run to inspect:", list(run_options.keys()), index=0)
+        selected_run = run_options[selected_label]
+    elif selected_run is None:
+        st.info("ℹ️ No saved evaluation runs found yet. Click **Run Evaluation** above to run the benchmark suite.")
+        st.stop()
+
+    if not selected_run or "configs" not in selected_run or not selected_run["configs"]:
+        st.warning("Selected evaluation run contains no configuration results.")
+        st.stop()
+
+    # Banner for aborted runs
+    if selected_run.get("aborted_reason"):
+        st.warning(f"⚠️ **{selected_run['aborted_reason']}**")
+
+    configs_data = selected_run["configs"]
+    run_mode = selected_run.get("run_mode", "full")
+    is_retrieval_only = run_mode == "retrieval_only"
+    top_k_used = selected_run.get("top_k", 5)
+
+    st.markdown(f"### 📈 Results for Run `{selected_run.get('run_id')}`")
+    st.caption(f"Executed on: `{selected_run.get('timestamp')}` | Total test cases: {selected_run.get('total_test_cases', 'N/A')} | Mode: `{'Retrieval-only' if is_retrieval_only else 'Full RAG'}`")
+
+    # ── Summary Comparison Table ──────────────────────────────────────────────
+    st.subheader("📋 Configuration Comparison Table")
+
+    comparison_rows = []
+    if is_retrieval_only:
+        metric_labels = [
+            (f"Hit@{top_k_used}", "hit_at_k", "%"),
+            ("MRR", "mrr", "ratio"),
+            ("Answerable Questions", "total_answerable", " count"),
+            ("Total Questions", "total_questions", " count"),
+        ]
+    else:
+        metric_labels = [
+            ("Answer Accuracy", "answer_accuracy", "%"),
+            ("Citation Hit Rate", "citation_hit_rate", "%"),
+            ("Refusal Accuracy", "refusal_accuracy", "%"),
+            ("Average Latency", "average_latency_ms", " ms"),
+            (f"Hit@5", "hit_at_5", "%"),
+            ("MRR", "mrr", "ratio"),
+            ("Passed Questions", "passed_count", " count"),
+            ("Failed Questions", "failed_count", " count"),
+            ("API Errors", "api_errors", " count"),
+            ("Total Questions", "total_questions", " count"),
+        ]
+
+    for label, key, unit in metric_labels:
+        row = {"Metric": label}
+        for cfg_name, cfg_info in configs_data.items():
+            metrics = cfg_info.get("metrics", {})
+            val = metrics.get(key, 0)
+            col_label = f"Config {cfg_name} ({cfg_info.get('retrieval_mode', '')})"
+            if unit == "%":
+                row[col_label] = f"{val * 100:.1f}%"
+            elif unit == "ratio":
+                row[col_label] = f"{val:.4f}"
+            elif unit == " ms":
+                row[col_label] = f"{val:.1f} ms"
+            else:
+                row[col_label] = f"{val}"
+        comparison_rows.append(row)
+
+    df_comparison = pd.DataFrame(comparison_rows)
+    st.dataframe(df_comparison, use_container_width=True, hide_index=True)
+
+    csv_bytes = df_comparison.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "📥 Download Comparison Metrics (CSV)",
+        data=csv_bytes,
+        file_name=f"{selected_run.get('run_id')}_metrics.csv",
+        mime="text/csv",
+        key="btn_dl_metrics_csv",
     )
+
+    # ── Bar Charts Comparing Configurations ───────────────────────────────────
+    st.subheader("📊 Metric Comparison Charts")
+
+    col_chart1, col_chart2 = st.columns(2)
+
+    with col_chart1:
+        if is_retrieval_only:
+            st.markdown(f"**Retrieval Quality (%)**")
+            chart_data: dict[str, list[float]] = {"Metric": [f"Hit@{top_k_used}", "MRR (×100)"]}
+            for cfg_name, cfg_info in configs_data.items():
+                m = cfg_info.get("metrics", {})
+                chart_data[f"Config {cfg_name}"] = [
+                    m.get("hit_at_k", 0.0) * 100,
+                    m.get("mrr", 0.0) * 100,
+                ]
+            df_acc_chart = pd.DataFrame(chart_data).set_index("Metric")
+            st.bar_chart(df_acc_chart)
+        else:
+            st.markdown("**Accuracy & Precision Metrics (%)**")
+            chart_data = {"Metric": ["Answer Accuracy", "Citation Hit Rate", "Refusal Accuracy", "Hit@5", "MRR (×100)"]}
+            for cfg_name, cfg_info in configs_data.items():
+                m = cfg_info.get("metrics", {})
+                chart_data[f"Config {cfg_name}"] = [
+                    m.get("answer_accuracy", 0.0) * 100,
+                    m.get("citation_hit_rate", 0.0) * 100,
+                    m.get("refusal_accuracy", 0.0) * 100,
+                    m.get("hit_at_5", 0.0) * 100,
+                    m.get("mrr", 0.0) * 100,
+                ]
+            df_acc_chart = pd.DataFrame(chart_data).set_index("Metric")
+            st.bar_chart(df_acc_chart)
+
+    with col_chart2:
+        if not is_retrieval_only:
+            st.markdown("**Average Latency (ms)**")
+            latency_data = {
+                f"Config {cfg_name}": [cfg_info.get("metrics", {}).get("average_latency_ms", 0.0)]
+                for cfg_name, cfg_info in configs_data.items()
+            }
+            df_lat_chart = pd.DataFrame(latency_data, index=["Latency (ms)"])
+            st.bar_chart(df_lat_chart)
+        else:
+            st.markdown("**Hit count vs answerable questions**")
+            hit_data: dict[str, list[int]] = {"Metric": ["Hit count", "Answerable total"]}
+            for cfg_name, cfg_info in configs_data.items():
+                m = cfg_info.get("metrics", {})
+                hit_data[f"Config {cfg_name}"] = [
+                    m.get("hit_count", 0),
+                    m.get("total_answerable", 0),
+                ]
+            df_hit_chart = pd.DataFrame(hit_data).set_index("Metric")
+            st.bar_chart(df_hit_chart)
+
+    st.markdown("---")
+
+    # ── Per-Question Detailed Inspection Table ────────────────────────────────
+    st.subheader("🔍 Per-Question Results & Failure Inspection")
+    st.caption("Inspect individual test questions to verify answer generation, keyword presence, citation hits, and refusal accuracy.")
+
+    cfg_names = list(configs_data.keys())
+    selected_inspect_cfg = st.radio("Select Config to Inspect:", cfg_names, horizontal=True)
+
+    per_q_list = configs_data[selected_inspect_cfg].get("per_question", [])
+    if not per_q_list:
+        st.info("No per-question data available for this configuration.")
+    else:
+        # Filter options
+        col_f1, col_f2 = st.columns([2, 1])
+        with col_f1:
+            filter_choice = st.selectbox(
+                "Filter Questions:",
+                ["All Questions", "❌ Failures Only", "⚠️ API Errors Only", "✅ Passed Only"],
+                index=0,
+            )
+        with col_f2:
+            passed_c = sum(1 for q in per_q_list if q.get("passed"))
+            error_c = sum(1 for q in per_q_list if q.get("status") == "ERROR")
+            failed_c = sum(1 for q in per_q_list if q.get("status") == "FAIL")
+            st.metric("Total Questions", f"{len(per_q_list)}", delta=f"{passed_c} passed / {failed_c} failed / {error_c} API errors")
+
+        filtered_questions = []
+        for q in per_q_list:
+            if filter_choice == "❌ Failures Only" and q.get("status") != "FAIL":
+                continue
+            if filter_choice == "⚠️ API Errors Only" and q.get("status") != "ERROR":
+                continue
+            if filter_choice == "✅ Passed Only" and not q.get("passed"):
+                continue
+            filtered_questions.append(q)
+
+        # Overview Table
+        table_records = []
+        for q in filtered_questions:
+            reasons = "; ".join(q.get("failure_reasons", [])) if q.get("failure_reasons") else "—"
+            status_display = "⚠️ ERROR" if q.get("status") == "ERROR" else ("✅ PASS" if q.get("passed") else "❌ FAIL")
+            hit_val = q.get("hit")
+            rank_val = q.get("first_correct_rank")
+            row: dict[str, Any] = {
+                "ID": q.get("id"),
+                "Type": "Answerable" if q.get("answerable") else "Unanswerable",
+                "Question": q.get("question"),
+            }
+            if is_retrieval_only:
+                row["Expected Source"] = q.get("expected_source") or "—"
+                row[f"Hit@{top_k_used}"] = "✅" if hit_val is True else ("❌" if hit_val is False else "—")
+                row["First Correct Rank"] = str(rank_val) if rank_val is not None else "—"
+                row["Reciprocal Rank"] = f"{q.get('reciprocal_rank', 0.0):.4f}" if q.get("reciprocal_rank") is not None else "—"
+            else:
+                row["Status"] = status_display
+                row["Expected Answer"] = q.get("expected_answer")
+                row["Actual Answer"] = q.get("actual_answer")
+                row["Latency"] = f"{q.get('latency_ms', 0)} ms"
+                row[f"Hit@5"] = "✅" if hit_val is True else ("❌" if hit_val is False else "—")
+                row["First Correct Rank"] = str(rank_val) if rank_val is not None else "—"
+                row["Failure Reason"] = reasons
+            table_records.append(row)
+
+        st.dataframe(pd.DataFrame(table_records), use_container_width=True, hide_index=True)
+
+        # Expandable inspection cards
+        with st.expander("🔎 Deep Inspection (Question-by-Question)", expanded=False):
+            for q in filtered_questions:
+                status_icon = "⚠️" if q.get("status") == "ERROR" else ("✅" if q.get("passed") else "❌")
+                st.markdown(f"#### {status_icon} `{q.get('id')}`: {q.get('question')}")
+                st.markdown(f"- **Expected Answer:** `{q.get('expected_answer')}`")
+                st.markdown(f"- **Actual Output:** {q.get('actual_answer')}")
+                if q.get("expected_source"):
+                    st.markdown(f"- **Expected Source Notice:** `{q.get('expected_source')}`")
+                if q.get("citations"):
+                    c_titles = [f"{c.get('title')} (p.{c.get('page')})" for c in q["citations"]]
+                    st.markdown(f"- **Returned Citations:** {', '.join(c_titles)}")
+                if q.get("failure_reasons"):
+                    st.error(f"Failure Reason(s): {', '.join(q['failure_reasons'])}")
+                st.markdown("---")

@@ -30,15 +30,17 @@ def answer_question(
     category: str | None = None,
     config: str | None = None,
     llm_client: BaseLLMClient | None = None,
+    collection_name: str | None = None,
 ) -> dict:
     """Run the full RAG pipeline for *question*.
 
     Args:
-        question:   The student's question.
-        category:   Optional category filter passed to the retriever.
-        config:     Named retrieval configuration (``"A"`` = vector-only,
-                    ``"B"`` = hybrid). Defaults to the env-configured mode.
-        llm_client: Injectable LLM client (used in tests to avoid real API calls).
+        question:        The student's question.
+        category:        Optional category filter passed to the retriever.
+        config:          Named retrieval configuration (``"A"`` = vector-only,
+                         ``"B"`` = hybrid). Defaults to the env-configured mode.
+        llm_client:      Injectable LLM client (used in tests to avoid real API calls).
+        collection_name: Optional Chroma collection name to query.
 
     Returns:
         Dict with answer, citations, chunks, latency_ms, and config name.
@@ -56,7 +58,10 @@ def answer_question(
     config_label = config or "default"
 
     # ── Retrieve & Apply Latest-Wins ──────────────────────────────────────────
-    raw_chunks: list[RetrievedChunk] = retrieve(question, category=category, mode=mode)
+    retrieve_kwargs = {"category": category, "mode": mode}
+    if collection_name is not None:
+        retrieve_kwargs["collection_name"] = collection_name
+    raw_chunks: list[RetrievedChunk] = retrieve(question, **retrieve_kwargs)
     chunks, supersedes_notes = apply_latest_wins(raw_chunks, drop=True)
     logger.info(
         "RAG: question='%.80s…'  raw_chunks=%d  filtered_chunks=%d  notes=%s  config=%s",

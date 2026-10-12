@@ -13,6 +13,7 @@ Further routes (Milestone 4+):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import shutil
@@ -79,6 +80,16 @@ class AskRequest(BaseModel):
     question: str
     category: str | None = None
     config: str | None = None   # "A" = vector-only, "B" = hybrid
+
+
+class EvalRunRequest(BaseModel):
+    configs: list[str] = ["A", "B"]
+    delay_seconds: float = 7.0
+    rerun_failed_only: bool = False
+    previous_run_id: str | None = None
+    question_ids: list[str] | None = None
+    retrieval_only: bool = False   # skip LLM, measure Hit@5 and MRR only
+    top_k: int = 5                 # k for Hit@K in retrieval-only mode
 
 
 # ---------------------------------------------------------------------------
@@ -344,3 +355,92 @@ def _log_query(
             conn.commit()
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to write query log: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Evaluation endpoints
+# ---------------------------------------------------------------------------
+
+
+_eval_lock = asyncio.Lock()
+
+
+@app.post("/eval/run", tags=["evaluation"])
+async def run_evaluation_endpoint(
+    request: EvalRunRequest | list[str] | None = None,
+) -> JSONResponse:
+    """Run the evaluation benchmark across given configurations sequentially.
+
+    Body can be `{"configs": ["A", "B"], "delay_seconds": 7.0, "rerun_failed_only": false}` or `["A", "B"]`.
+    Set ``retrieval_only: true`` to skip LLM calls and measure only Hit@5 and MRR.
+    """
+    from app.evaluation.runner import run_evaluation, run_retrieval_only_eval
+
+    config_names = ["A", "B"]
+    delay_sec = 7.0
+    rerun_failed = False
+    prev_id = None
+    q_ids = None
+    retrieval_only = False
+    top_k = 5
+
+    if isinstance(request, list):
+        config_names = request
+    elif isinstance(request, EvalRunRequest):
+        config_names = request.configs
+        delay_sec = request.delay_seconds
+        rerun_failed = request.rerun_failed_only
+        prev_id = request.previous_run_id
+        q_ids = request.question_ids
+        retrieval_only = request.retrieval_only
+        top_k = request.top_k
+
+    logger.info(
+        "POST /eval/run requested with configs: %s (rerun_failed_only=%s, retrieval_only=%s)",
+        config_names,
+        rerun_failed,
+        retrieval_only,
+    )
+    try:
+        async with _eval_lock:
+            if retrieval_only:
+                report = run_retrieval_only_eval(
+                    config_names=config_names,
+                    question_ids=q_ids,
+                    top_k=top_k,
+                )
+            else:
+                report = run_evaluation(
+                    config_names=config_names,
+                    delay_seconds=delay_sec,
+                    rerun_failed_only=rerun_failed,
+                    previous_run_id=prev_id,
+                    question_ids=q_ids,
+                )
+        return JSONResponse(content=report, status_code=200)
+    except Exception as exc:
+        logger.error("Evaluation run failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Evaluation failed: {exc}") from exc
+
+
+EVAL_RESULTS_DIR = Path("eval") / "results"
+
+
+@app.get("/eval/results", tags=["evaluation"])
+async def get_evaluation_results() -> JSONResponse:
+    """List all saved evaluation runs from eval/results/."""
+    results_dir = EVAL_RESULTS_DIR
+    if not results_dir.exists():
+        return JSONResponse(content={"runs": [], "count": 0})
+
+    files = sorted(results_dir.glob("eval_*.json"), key=lambda f: f.name, reverse=True)
+    runs = []
+    for f in files:
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            data["filename"] = f.name
+            runs.append(data)
+        except Exception as exc:
+            logger.warning("Could not read eval file %s: %s", f.name, exc)
+
+    return JSONResponse(content={"runs": runs, "count": len(runs)})

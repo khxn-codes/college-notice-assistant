@@ -48,6 +48,7 @@ def retrieve(
     top_k: int | None = None,
     mode: str | None = None,
     apply_latest_wins_rule: bool = False,
+    collection_name: str | None = None,
 ) -> list[RetrievedChunk]:
     """Run hybrid (or vector-only) retrieval for *query*.
 
@@ -58,6 +59,7 @@ def retrieve(
         top_k:                  Final number of chunks to return. Defaults to ``settings.top_k``.
         mode:                   ``"hybrid"`` or ``"vector"``. Defaults to ``settings.retrieval_mode``.
         apply_latest_wins_rule: If True, filter out superseded notice chunks.
+        collection_name:        Target Chroma collection name (optional, defaults to main collection).
 
     Returns:
         List of :class:`RetrievedChunk` sorted by descending score.
@@ -66,7 +68,7 @@ def retrieve(
     retrieval_mode = mode if mode is not None else settings.retrieval_mode
 
     # ── Vector leg ────────────────────────────────────────────────────────────
-    vector_results = _vector_search(query, category=category, k=settings.vector_k)
+    vector_results = _vector_search(query, category=category, k=settings.vector_k, collection_name=collection_name)
 
     if retrieval_mode == "vector":
         # Vector-only — convert scores and return
@@ -99,12 +101,15 @@ def retrieve(
 
 
 def _vector_search(
-    query: str, category: str | None, k: int
+    query: str,
+    category: str | None,
+    k: int,
+    collection_name: str | None = None,
 ) -> list[RetrievedChunk]:
     """Query Chroma for the top-k most similar chunks."""
     try:
-        from app.ingestion.indexer import _get_collection
-        collection = _get_collection()
+        from app.ingestion.indexer import get_collection
+        collection = get_collection(collection_name or "notices")
     except Exception as exc:  # noqa: BLE001
         logger.error("Chroma unavailable for vector search: %s", exc)
         return []

@@ -1,1 +1,156 @@
-[]
+[
+  {
+    "id": "q01",
+    "question": "What time will the first lecture commence under the revised class timings?",
+    "expected_answer_contains": ["9:15"],
+    "expected_source": "2026-09-18_admin_class-timings-revised.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q02",
+    "question": "What is the student campus entry window under the revised timetable?",
+    "expected_answer_contains": ["8:30", "9:10"],
+    "expected_source": "2026-09-18_admin_class-timings-revised.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q03",
+    "question": "From which date are the revised class timings effective?",
+    "expected_answer_contains": ["21 September"],
+    "expected_source": "2026-09-18_admin_class-timings-revised.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q04",
+    "question": "What are the revised lunch break hours according to the latest administrative notice?",
+    "expected_answer_contains": ["12:45", "1:35"],
+    "expected_source": "2026-09-18_admin_class-timings-revised.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q05",
+    "question": "When is the B.Tech 2nd year Hackathon scheduled?",
+    "expected_answer_contains": ["18", "September"],
+    "expected_source": "2026-09-17_events_btech-hackathon.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q06",
+    "question": "How many bonus marks can students get for exceptional performance in the hackathon?",
+    "expected_answer_contains": ["2", "5"],
+    "expected_source": "2026-09-17_events_btech-hackathon.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q07",
+    "question": "Are mobile phones allowed during the B.Tech hackathon?",
+    "expected_answer_contains": ["prohibited"],
+    "expected_source": "2026-09-17_events_btech-hackathon.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q08",
+    "question": "What is the deadline to fill out the Google Form for NCC recruitment?",
+    "expected_answer_contains": ["22", "September"],
+    "expected_source": "2026-09-21_events_ncc-recruitment.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q09",
+    "question": "Who should students contact regarding NCC recruitment queries?",
+    "expected_answer_contains": ["Deepak Awasthi"],
+    "expected_source": "2026-09-21_events_ncc-recruitment.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q10",
+    "question": "On what date will the selection for Senior Division and Senior Wing NCC be conducted?",
+    "expected_answer_contains": ["26", "September"],
+    "expected_source": "2026-09-21_events_ncc-recruitment.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q11",
+    "question": "When do regular classes commence for newly admitted M.Tech first-year students?",
+    "expected_answer_contains": ["28", "September"],
+    "expected_source": "2026-09-22_academic_mtech-1st-year-commencement.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q12",
+    "question": "What are the dates for Deepawali holidays for students?",
+    "expected_answer_contains": ["6", "November", "12", "November"],
+    "expected_source": "2026-09-22_holidays_deepawali-intimation.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q13",
+    "question": "Until what date will the faculty and staff observe Deepawali holidays?",
+    "expected_answer_contains": ["11", "November"],
+    "expected_source": "2026-09-22_holidays_deepawali-intimation.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q14",
+    "question": "What is the maximum scholarship amount for selected undergraduate students under Reliance Foundation Scholarships?",
+    "expected_answer_contains": ["2 lakh"],
+    "expected_source": "2026-09-22_scholarship_reliance-foundation.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q15",
+    "question": "How many scholarships are available for postgraduate students under the Reliance Foundation Scholarships?",
+    "expected_answer_contains": ["100"],
+    "expected_source": "2026-09-22_scholarship_reliance-foundation.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q16",
+    "question": "What is the last date for submission of applications for Reliance Foundation Scholarships?",
+    "expected_answer_contains": ["5 October"],
+    "expected_source": "2026-09-22_scholarship_reliance-foundation.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q17",
+    "question": "What time do dropping buses depart from PSIT for the CT Exam?",
+    "expected_answer_contains": ["1:00 PM"],
+    "expected_source": "2026-10-08_transport_dropping-bus-route-ct-exam.pdf",
+    "answerable": true
+  },
+  {
+    "id": "q18",
+    "question": "What is the annual hostel fee for a double-seater AC room?",
+    "expected_answer_contains": [],
+    "expected_source": null,
+    "answerable": false
+  },
+  {
+    "id": "q19",
+    "question": "What is the syllabus for the second mid-semester physics exam?",
+    "expected_answer_contains": [],
+    "expected_source": null,
+    "answerable": false
+  },
+  {
+    "id": "q20",
+    "question": "What is the Wi-Fi password for the central library?",
+    "expected_answer_contains": [],
+    "expected_source": null,
+    "answerable": false
+  },
+  {
+    "id": "q21",
+    "question": "What are the timings for the campus gymnasium on weekends?",
+    "expected_answer_contains": [],
+    "expected_source": null,
+    "answerable": false
+  },
+  {
+    "id": "q22",
+    "question": "How much fine is charged per day for late fee submission?",
+    "expected_answer_contains": [],
+    "expected_source": null,
+    "answerable": false
+  }
+]

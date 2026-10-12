@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from app.config import settings
 from app.ingestion.chunker import Chunk
@@ -20,41 +21,66 @@ logger = logging.getLogger(__name__)
 # Lazy singletons — initialised on first use to avoid slow imports at startup
 _embedding_fn = None
 _chroma_client = None
-_collection = None
+_collections: dict[str, Any] = {}
 
 _COLLECTION_NAME = "notices"
 
 
-def _get_collection():
-    """Return (and lazily create) the Chroma collection."""
-    global _embedding_fn, _chroma_client, _collection  # noqa: PLW0603
-
-    if _collection is not None:
-        return _collection
+def get_chroma_client():
+    """Return (and lazily create) the persistent ChromaDB client."""
+    global _chroma_client  # noqa: PLW0603
+    if _chroma_client is not None:
+        return _chroma_client
 
     import chromadb
-    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
     chroma_dir = Path(settings.data_dir) / "chroma"
     chroma_dir.mkdir(parents=True, exist_ok=True)
+    _chroma_client = chromadb.PersistentClient(path=str(chroma_dir))
+    return _chroma_client
+
+
+def get_embedding_function():
+    """Return (and lazily create) the SentenceTransformer embedding function."""
+    global _embedding_fn  # noqa: PLW0603
+    if _embedding_fn is not None:
+        return _embedding_fn
+
+    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
     logger.info("Loading embedding model '%s' …", settings.embedding_model)
     _embedding_fn = SentenceTransformerEmbeddingFunction(
         model_name=settings.embedding_model
     )
+    return _embedding_fn
 
-    _chroma_client = chromadb.PersistentClient(path=str(chroma_dir))
-    _collection = _chroma_client.get_or_create_collection(
-        name=_COLLECTION_NAME,
-        embedding_function=_embedding_fn,
+
+def get_collection(name: str = _COLLECTION_NAME):
+    """Return (and lazily create) the specified Chroma collection."""
+    global _collections  # noqa: PLW0603
+    if name in _collections:
+        return _collections[name]
+
+    client = get_chroma_client()
+    fn = get_embedding_function()
+
+    coll = client.get_or_create_collection(
+        name=name,
+        embedding_function=fn,
         metadata={"hnsw:space": "cosine"},
     )
+    _collections[name] = coll
     logger.info(
         "Chroma collection '%s' ready (%d existing chunks).",
-        _COLLECTION_NAME,
-        _collection.count(),
+        name,
+        coll.count(),
     )
-    return _collection
+    return coll
+
+
+def _get_collection(name: str = _COLLECTION_NAME):
+    """Backwards-compatible alias for get_collection."""
+    return get_collection(name)
 
 
 def index_chunks(
@@ -63,21 +89,23 @@ def index_chunks(
     title: str,
     notice_date: str,   # ISO-8601 string
     category: str,
+    collection_name: str = _COLLECTION_NAME,
 ) -> None:
     """Embed ``chunks`` and upsert them into the Chroma collection.
 
     Args:
-        chunks:       Chunks produced by :mod:`app.ingestion.chunker`.
-        notice_id:    UUID of the notice row in SQLite.
-        title:        Notice title (stored as metadata).
-        notice_date:  ISO-8601 date string (stored as metadata).
-        category:     Notice category (stored as metadata).
+        chunks:          Chunks produced by :mod:`app.ingestion.chunker`.
+        notice_id:       UUID of the notice row in SQLite.
+        title:           Notice title (stored as metadata).
+        notice_date:     ISO-8601 date string (stored as metadata).
+        category:        Notice category (stored as metadata).
+        collection_name: Target Chroma collection name (default: "notices").
     """
     if not chunks:
         logger.warning("index_chunks called with empty chunk list for notice %s — nothing to index.", notice_id)
         return
 
-    collection = _get_collection()
+    collection = get_collection(collection_name)
 
     ids = [f"{notice_id}_c{c.chunk_index}" for c in chunks]
     documents = [c.text for c in chunks]
@@ -94,13 +122,93 @@ def index_chunks(
     ]
 
     logger.info(
-        "Indexing %d chunk(s) for notice '%s' (id=%s) …",
+        "Indexing %d chunk(s) for notice '%s' (id=%s) into '%s' …",
         len(chunks),
         title,
         notice_id,
+        collection_name,
     )
     collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
-    logger.info("Indexed %d chunk(s) into Chroma.", len(chunks))
+    logger.info("Indexed %d chunk(s) into Chroma collection '%s'.", len(chunks), collection_name)
+
+
+def reindex_collection_for_config(config_name: str, force: bool = False) -> int:
+    """Re-index all stored notices into a separate Chroma collection for a config.
+
+    When a config specifies a different chunk size, this slices notices using
+    that config's chunk size and stores the resulting chunks into the config's
+    designated collection without touching the main 'notices' collection.
+    """
+    from app.config import get_rag_config
+    from app.db import get_connection
+    from app.ingestion.chunker import chunk_pages
+    from app.ingestion.extract import extract_pages
+
+    cfg = get_rag_config(config_name)
+    coll = get_collection(cfg.collection_name)
+
+    # If already indexed and force is False, skip reindexing
+    if coll.count() > 0 and not force:
+        logger.info(
+            "Collection '%s' for Config %s already has %d chunks — skipping re-indexing.",
+            cfg.collection_name,
+            cfg.name,
+            coll.count(),
+        )
+        return coll.count()
+
+    # If force, clear the separate collection first (never clear main notices)
+    if force and cfg.collection_name != _COLLECTION_NAME and coll.count() > 0:
+        client = get_chroma_client()
+        client.delete_collection(cfg.collection_name)
+        _collections.pop(cfg.collection_name, None)
+        coll = get_collection(cfg.collection_name)
+
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, title, notice_date, category, source_file FROM notices ORDER BY notice_date ASC"
+        ).fetchall()
+
+    if not rows:
+        logger.warning("No notices found in database to re-index for config %s.", cfg.name)
+        return 0
+
+    total_chunks = 0
+    data_dir = Path(settings.data_dir)
+
+    for row in rows:
+        # Search for source file in processed then inbox
+        file_path = data_dir / "processed" / row["source_file"]
+        if not file_path.exists():
+            file_path = data_dir / "inbox" / row["source_file"]
+
+        if not file_path.exists():
+            logger.warning("Source file not found for notice '%s': %s", row["title"], row["source_file"])
+            continue
+
+        pages = extract_pages(file_path)
+        if not pages:
+            logger.warning("No pages extracted from %s for notice %s.", file_path, row["id"])
+            continue
+
+        chunks = chunk_pages(pages, chunk_size=cfg.chunk_size, chunk_overlap=cfg.chunk_overlap)
+        index_chunks(
+            chunks=chunks,
+            notice_id=row["id"],
+            title=row["title"],
+            notice_date=row["notice_date"],
+            category=row["category"],
+            collection_name=cfg.collection_name,
+        )
+        total_chunks += len(chunks)
+
+    logger.info(
+        "Re-indexing complete for Config %s: %d total chunk(s) in collection '%s'.",
+        cfg.name,
+        total_chunks,
+        cfg.collection_name,
+    )
+    return coll.count()
 
 
 def delete_notice_chunks(notice_id: str) -> None:
