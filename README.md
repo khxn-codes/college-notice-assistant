@@ -59,35 +59,89 @@ Students frequently miss crucial deadlines and updates because notices are burie
 
 ```mermaid
 flowchart TD
-    subgraph Ingestion Pipeline
-        A[Notices in data/inbox or UI Upload] --> B[PyMuPDF / pypdf Text Extraction]
-        B --> C[Metadata & Revision Parser]
-        C --> D[Sliding Window Chunker]
-        D --> E[BAAI/bge-small-en-v1.5 Embedder]
-        E --> F[(ChromaDB Vector Store)]
-        D --> G[(In-Memory BM25 Index)]
-        C --> H[(SQLite app.db Metadata)]
+    subgraph Ingestion ["Ingestion Pipeline"]
+        A["Notices (data/inbox or UI Upload)"] --> B["PyMuPDF / pypdf Text Extraction"]
+        B --> C["Metadata and Revision Parser"]
+        C --> D["Sliding Window Chunker"]
+        D --> E["Embedding Model (BAAI/bge-small-en-v1.5)"]
+        E --> F[("ChromaDB Vector Store")]
+        D --> G[("In-Memory BM25 Index")]
+        C --> H[("SQLite app.db Metadata")]
     end
 
-    subgraph Query & RAG Pipeline
-        Q[User Query] --> R{Category Filter?}
-        R --> S[Dense Vector Search]
-        R --> T[Sparse BM25 Search]
-        S & T --> U[Reciprocal Rank Fusion - RRF]
-        U --> V[Latest-Wins Re-ranker]
-        V --> W[Top-K Relevant Passages]
-        W --> X[Prompt Builder with Citation Rules]
-        X --> Y[Configurable LLM Provider]
-        Y --> Z[Cited Answer or Exact Refusal]
+    subgraph Query ["Query and RAG Pipeline"]
+        Q["User Query"] --> R{"Category Filter?"}
+        R --> S["Dense Vector Search (ChromaDB)"]
+        R --> T["Sparse Keyword Search (BM25)"]
+        S --> U["Reciprocal Rank Fusion (RRF)"]
+        T --> U
+        U --> V["Latest-Wins Re-ranker"]
+        V --> W["Top-K Relevant Passages"]
+        W --> X["Prompt Builder with Citation Rules"]
+        X --> Y["Configurable LLM Provider"]
+        Y --> Z["Cited Answer or Exact Refusal"]
     end
 
-    subgraph Evaluation & UI
-        Z --> UI[Streamlit Web UI]
-        EVAL[eval/test_set.json] --> EVAL_RUNNER[Evaluation Runner]
-        EVAL_RUNNER --> METRICS[Hit@5, MRR, Accuracy, Latency]
+    subgraph UI_Eval ["Evaluation and UI"]
+        Z --> UI["Streamlit Web UI"]
+        EVAL["eval/test_set.json"] --> EVAL_RUNNER["Evaluation Runner"]
+        EVAL_RUNNER --> METRICS["Metrics: Hit@5, MRR, Accuracy"]
         METRICS --> UI
     end
 ```
+
+<details>
+<summary><b>Click to expand ASCII Architecture Diagram</b></summary>
+
+```
++-----------------------------------------------------------------------------------+
+|                                1. Ingestion Pipeline                              |
+|                                                                                   |
+|  [PDF / Text Notices] -> [Text Extraction] -> [Metadata & Revision Parser]        |
+|                                                       |                           |
+|                                                       v                           |
+|                                           [Sliding Window Chunker]                |
+|                                            /                    \                 |
+|                                           v                      v                |
+|                                   [Vector Embedding]      [BM25 Indexer]          |
+|                                           |                      |                |
+|                                           v                      v                |
+|                                    [( ChromaDB )]         [( In-Memory )]         |
++-----------------------------------------------------------------------------------+
+                                            |
+                                            v
++-----------------------------------------------------------------------------------+
+|                             2. Query & Retrieval Pipeline                         |
+|                                                                                   |
+|  [User Question] -> [Category Filter?]                                            |
+|                            |                                                      |
+|             +--------------+--------------+                                       |
+|             v                             v                                       |
+|     [Dense Vector Search]         [Sparse BM25 Search]                            |
+|             \                             /                                       |
+|              +-------------> <-----------+                                        |
+|                             |                                                     |
+|                             v                                                     |
+|             [Reciprocal Rank Fusion (RRF)]                                        |
+|                             |                                                     |
+|                             v                                                     |
+|                [Latest-Wins Re-ranking]                                           |
+|                             |                                                     |
+|                             v                                                     |
+|              [Top-K Grounding Passages]                                           |
++-----------------------------------------------------------------------------------+
+                                            |
+                                            v
++-----------------------------------------------------------------------------------+
+|                             3. Generation & Evaluation                            |
+|                                                                                   |
+|  [Strict Grounding Prompt] -> [LLM: Gemini / OpenAI] -> [Answer with Citations]   |
+|                                                                  |                |
+|                                                                  v                |
+|   [eval/test_set.json] -> [Evaluation Runner] ------------> [Streamlit UI]        |
++-----------------------------------------------------------------------------------+
+```
+</details>
 
 ---
 
