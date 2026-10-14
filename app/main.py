@@ -31,7 +31,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.db import get_connection, init_db
 from app.ingestion.folder_connector import FolderConnector
-from app.ingestion.indexer import update_notice_chunks_metadata
+from app.ingestion.indexer import delete_notice_chunks, update_notice_chunks_metadata
 from app.ingestion.pipeline import ingest_file
 from app.rag import answer_question
 from app.retrieval.bm25_store import rebuild_bm25_index
@@ -281,6 +281,31 @@ async def update_notice(notice_id: str, request: NoticeUpdateRequest) -> JSONRes
     logger.info("Notice %s updated: %s", notice_id, updates)
     return JSONResponse(content={"status": "updated", "notice": dict(updated_row)})
 
+
+@app.delete("/notices/{notice_id}", tags=["notices"])
+async def delete_notice(notice_id: str) -> JSONResponse:
+    """Remove a notice and all its indexed chunks.
+
+    Deletes from SQLite and from Chroma. Rebuilds the BM25 index afterwards.
+    """
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT id, title FROM notices WHERE id = ?", (notice_id,)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"Notice '{notice_id}' not found.")
+
+        conn.execute("DELETE FROM notices WHERE id = ?", (notice_id,))
+        conn.commit()
+
+    try:
+        delete_notice_chunks(notice_id)
+        rebuild_bm25_index()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to clean up Chroma/BM25 for deleted notice %s: %s", notice_id, exc)
+
+    logger.info("Notice %s ('%s') deleted.", notice_id, existing["title"])
+    return JSONResponse(content={"status": "deleted", "notice_id": notice_id})
 
 # ---------------------------------------------------------------------------
 # RAG — /ask

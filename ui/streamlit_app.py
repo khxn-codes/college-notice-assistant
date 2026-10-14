@@ -129,6 +129,14 @@ def update_notice_metadata(notice_id: str, updates: dict[str, Any]) -> dict[str,
     return resp.json()
 
 
+def delete_notice_api(notice_id: str) -> dict[str, Any]:
+    """Delete a notice and all its chunks via DELETE /notices/{id}."""
+    resp = httpx.delete(f"{BACKEND_URL}/notices/{notice_id}", timeout=15.0)
+    resp.raise_for_status()
+    clear_notices_cache()
+    return resp.json()
+
+
 def format_api_error_for_ui(err_msg: str) -> str:
     """Classify and format API error with real cause (rate limit, quota, model not found, auth), key never shown."""
     text = str(err_msg).lower()
@@ -199,7 +207,11 @@ is_healthy = check_backend_health()
 if is_healthy:
     st.sidebar.success(f"Backend Connected\n`{BACKEND_URL}`")
 else:
-    st.sidebar.error(f"Backend Unreachable\n`{BACKEND_URL}`\nPlease start the API:\n`uvicorn app.main:app --reload`")
+    st.sidebar.error(
+        f"Backend Unreachable\n`{BACKEND_URL}`\n"
+        "Please start the API:\n"
+        "`.\.run.ps1` (Windows) or `./run.sh` (Linux/macOS)"
+    )
 
 st.sidebar.markdown("---")
 st.sidebar.caption("NoticeIQ • AI College Notice Assistant")
@@ -219,8 +231,10 @@ if page == "💬 Chat":
 
     if not is_healthy:
         st.error(
-            f"⚠️ **Backend service is not running.** Please start the FastAPI backend server:\n\n"
-            f"```powershell\nuvicorn app.main:app --reload\n```\n"
+            f"⚠️ **Backend service is not running.**\n\n"
+            f"Start both services with one command:\n"
+            f"- **Windows:** `.\\run.ps1`\n"
+            f"- **Linux/macOS:** `./run.sh`\n\n"
             f"The UI expects the API at `{BACKEND_URL}`."
         )
 
@@ -295,7 +309,10 @@ if page == "💬 Chat":
 
         with st.chat_message("assistant"):
             if not is_healthy:
-                err_msg = "Cannot reach backend API. Please make sure `uvicorn app.main:app --reload` is running."
+                err_msg = (
+                    "Cannot reach backend API. "
+                    "Start it with `.\\run.ps1` (Windows) or `./run.sh` (Linux/macOS)."
+                )
                 st.error(err_msg)
                 st.session_state.messages.append({"role": "assistant", "content": err_msg})
             else:
@@ -501,6 +518,21 @@ elif page == "📋 Notices":
                 except Exception as e:
                     st.error(f"Failed to update notice: {e}")
 
+        # ── Delete Notice ──────────────────────────────────────────────────────
+        with st.expander("🗑️ Delete Notice", expanded=False):
+            st.caption("Permanently remove a notice from the index (calls DELETE /notices/{id}). This action cannot be undone.")
+            del_options = {f"{n['title']} ({n['notice_date']}) [ID: {n['id'][:8]}…]": n for n in notices}
+            del_label = st.selectbox("Select notice to delete:", list(del_options.keys()), key="del_notice_select")
+            del_notice = del_options[del_label]
+            st.warning(f"You are about to delete **{del_notice['title']}**. This will remove all its chunks from the vector index.")
+            if st.button("🗑️ Confirm Delete", type="primary", key="btn_confirm_delete"):
+                try:
+                    delete_notice_api(del_notice["id"])
+                    st.success(f"Deleted notice **{del_notice['title']}** and all its chunks.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to delete notice: {e}")
+
 
 # ---------------------------------------------------------------------------
 # Page: 📊 Evaluation
@@ -566,8 +598,9 @@ elif page == "📊 Evaluation":
         run_disabled = not is_healthy or len(chosen_configs) == 0
         if st.button("🚀 Run Evaluation", type="primary", disabled=run_disabled, key="btn_run_eval"):
             prev_run_id_val = None
-            if rerun_failed and selected_run:
-                prev_run_id_val = selected_run.get("run_id")
+            _current_run = st.session_state.get("latest_eval_run")
+            if rerun_failed and _current_run:
+                prev_run_id_val = _current_run.get("run_id")
             if retrieval_only_mode:
                 spinner_msg = f"Running retrieval-only evaluation on Config(s) {chosen_configs} (Hit@5 + MRR)..."
             elif rerun_failed:

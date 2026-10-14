@@ -17,8 +17,9 @@
 - [Folder Structure](#folder-structure)
 - [Setup & Installation](#setup--installation)
   - [Prerequisites](#prerequisites)
-  - [Option A: Local Virtual Environment (Fastest)](#option-a-local-virtual-environment-fastest)
-  - [Option B: Docker & Docker Compose](#option-b-docker--docker-compose)
+  - [Configuration](#configuration)
+  - [Running on Windows](#running-on-windows)
+  - [Running on Linux or macOS](#running-on-linux-or-macos)
 - [Adding & Managing Notices](#adding--managing-notices)
 - [Running Tests](#running-tests)
 - [Running the Evaluation Suite](#running-the-evaluation-suite)
@@ -102,9 +103,9 @@ flowchart TD
 | **Embeddings** | `sentence-transformers` (`BAAI/bge-small-en-v1.5` default, run locally) |
 | **PDF Extraction** | PyMuPDF (`fitz`), fallback to `pypdf` |
 | **Metadata DB** | SQLite (`data/app.db`) |
-| **LLM Providers** | Google Gemini (`google-genai`), OpenAI, Anthropic, or local endpoints |
+| **LLM Providers** | Google Gemini (`google-generativeai`), OpenAI, Anthropic, or local endpoints |
 | **Testing** | `pytest`, `pytest-asyncio`, `httpx` |
-| **Packaging** | Docker, `docker-compose`, PowerShell (`run.ps1`), Bash (`run.sh`), `Makefile` |
+| **Launcher** | PowerShell (`run.ps1`), Bash (`run.sh`), `Makefile` |
 
 ---
 
@@ -118,9 +119,6 @@ college-notice-assistant/
 ├── README.md               # Project documentation (this file)
 ├── .env.example            # Environment variable template
 ├── requirements.txt        # Pinned production dependencies
-├── Dockerfile              # Multi-stage slim Docker image
-├── docker-compose.yml      # Dual-service Docker Compose configuration
-├── .dockerignore           # Container ignore rules (keeps secrets safe)
 ├── run.ps1                 # Windows PowerShell one-click launcher
 ├── run.sh                  # Linux / macOS Bash one-click launcher
 ├── Makefile                # Standard developer tasks (install, run, test)
@@ -161,7 +159,7 @@ college-notice-assistant/
 ## Setup & Installation
 
 ### Prerequisites
-- **Python 3.11+** installed
+- **Python 3.11+** installed and on your `PATH`
 - An API key for your chosen LLM provider (e.g., Google Gemini, OpenAI)
 
 ### Configuration
@@ -172,6 +170,10 @@ college-notice-assistant/
    ```
 2. Copy the template environment file:
    ```bash
+   # Windows
+   copy .env.example .env
+
+   # Linux / macOS
    cp .env.example .env
    ```
 3. Edit `.env` and fill in your LLM credentials:
@@ -186,52 +188,58 @@ college-notice-assistant/
    DATA_DIR=./data
    ```
 
+4. Create a virtual environment and install dependencies:
+   ```bash
+   # Windows
+   python -m venv .venv
+   .venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
+
+   # Linux / macOS
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
 ---
 
-### Option A: Local Virtual Environment (Fastest)
+### Running on Windows
 
-#### On Windows:
-Run the provided PowerShell script (it automatically verifies dependencies and starts both services):
+Run the provided PowerShell script (it automatically creates required directories and starts both services):
+
 ```powershell
+.\.venv\Scripts\Activate.ps1
 .\run.ps1
 ```
 
-#### On Linux or macOS:
+Or using Makefile:
+```powershell
+make install
+make run
+```
+
+---
+
+### Running on Linux or macOS
+
 ```bash
+source .venv/bin/activate
 chmod +x run.sh
 ./run.sh
 ```
-*(Or use `make install` followed by `make run`)*
+
+Or using Makefile:
+```bash
+make install
+make run
+```
 
 Once running:
 - **Streamlit Web UI:** [http://localhost:8501](http://localhost:8501)
 - **FastAPI Backend:** [http://127.0.0.1:8000](http://127.0.0.1:8000)
 - **Interactive Swagger Docs:** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
----
-
-### Option B: Docker & Docker Compose
-
-NoticeIQ includes a production-ready containerized setup with volume mounts for persistent data storage and embedding model caching.
-
-1. Ensure Docker and Docker Compose are installed.
-2. Build and start both containers:
-   ```bash
-   docker compose up --build
-   ```
-3. To run in background mode:
-   ```bash
-   docker compose up -d
-   ```
-4. To stop the containers:
-   ```bash
-   docker compose down
-   ```
-
-> **Persistent Volumes:**
-> - `./data` is mounted to `/app/data` inside containers so notices, SQLite, and vector indices persist between runs.
-> - `hf-cache` volume stores downloaded HuggingFace models so they are not re-downloaded upon container restart.
-> - Secrets are never baked into images and are injected strictly at runtime from your local `.env`.
+> **Note:** Press `Ctrl+C` in the terminal to stop both services.
 
 ---
 
@@ -263,7 +271,7 @@ Then click **Sync Inbox** on the **Notices** page in the UI or call `POST /sync`
 NoticeIQ has a comprehensive test suite of 110+ tests covering extraction, chunking, deduplication, hybrid retrieval, latest-wins logic, prompt constraints, and evaluation metrics:
 
 ```bash
-# Using pytest directly
+# Activate venv first, then:
 pytest -v
 
 # Or using Makefile

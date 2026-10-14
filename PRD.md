@@ -56,7 +56,7 @@ Notices are exported manually from the ERP (PDF or text) and placed in `data/inb
 - At least 80% of answerable test questions answered correctly with the correct source notice cited.
 - At least 90% of unanswerable test questions correctly refused.
 - Revised-notice test cases return the newest information.
-- App runs with a single documented command (Docker or `make run`).
+- App runs with a single documented command (`.\run.ps1` on Windows or `./run.sh` on Linux/macOS).
 - Response time under about 10 seconds per question on a laptop.
 
 ## 10. Constraints

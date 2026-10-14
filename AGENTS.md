@@ -4,7 +4,7 @@
 NoticeIQ: RAG-Based AI Assistant for Answering College Notice Queries with Citations: a RAG chatbot that answers student questions about college notices with citations. Read `PRD.md` and `TECH_SPEC.md` before doing anything. They are the source of truth.
 
 ## Stack
-Python 3.11+, FastAPI, Streamlit, ChromaDB, sentence-transformers, rank_bm25, SQLite, pytest, Docker.
+Python 3.11+, FastAPI, Streamlit, ChromaDB, sentence-transformers, rank_bm25, SQLite, pytest.
 
 ## How to work
 - Work on one milestone at a time (see TECH_SPEC.md section 13). Stop after each milestone and wait for review.

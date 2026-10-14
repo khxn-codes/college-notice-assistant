@@ -55,6 +55,10 @@ pillow==12.3.0
 # ── HTTP client (Streamlit -> FastAPI) ─────────────────────────────────────────
 httpx==0.28.1
 httpcore==1.0.9
+# httpx2 is required by starlette.testclient to suppress deprecation warnings
+httpx2==2.13.1
+httpcore2==2.13.1
+truststore==0.10.5
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
 numpy==2.5.4

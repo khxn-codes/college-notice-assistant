@@ -22,7 +22,7 @@ User question -> (optional category filter) -> hybrid retrieval (vector + BM25)
 - LLM: provider-agnostic wrapper; model and API key via environment variables
 - Storage: SQLite for notice metadata and query logs
 - Testing: pytest
-- Packaging: Docker + docker-compose, `requirements.txt`, `.env.example`
+- Packaging: `requirements.txt`, `.env.example`, `run.ps1` (Windows), `run.sh` (Linux/macOS)
 
 ## 3. Folder structure
 
@@ -33,9 +33,10 @@ college-notice-assistant/
   AGENTS.md
   README.md
   .env.example
-  docker-compose.yml
-  Dockerfile
   requirements.txt
+  run.ps1               # Windows one-click launcher
+  run.sh                # Linux/macOS one-click launcher
+  Makefile              # Developer task shortcuts
   data/
     inbox/            # drop exported notices here
     processed/        # raw files after ingestion
@@ -178,7 +179,7 @@ DATA_DIR=./data
 Never commit `.env`.
 
 ## 12. Non-functional requirements
-- Runs locally with one command (`docker compose up` or `make run`).
+- Runs locally with one command (`.\run.ps1` on Windows or `make run`).
 - No student personal data is ingested or stored.
 - Graceful errors: unreadable PDF, empty text, LLM failure (show a clear message, do not crash).
 - Logging for ingestion and queries.
@@ -191,7 +192,7 @@ Never commit `.env`.
 4. **Latest-wins logic:** revision detection and the superseded-notice handling. *Done when:* a revised-notice question returns the newest information.
 5. **UI:** Streamlit chat, notices, and upload pages. *Done when:* the full flow works from the browser.
 6. **Evaluation:** test set, runner, metrics, dashboard comparing two configs. *Done when:* a results table and chart are shown.
-7. **Polish:** Dockerfile, README with setup and screenshots, error handling, final tests. *Done when:* a fresh clone runs with one command.
+7. **Polish:** README with setup and screenshots, error handling, final tests. *Done when:* a fresh clone runs with one command.*
 
 ## 14. Rules for the coding agent
 See `AGENTS.md` in the repo root. In short: follow the PRD and this spec, work one milestone at a time, keep the connector swappable, never hardcode secrets, and run tests after every change.
